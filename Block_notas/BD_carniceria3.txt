@@ -1,0 +1,396 @@
+CREATE DATABASE carniceria_db;
+USE carniceria_db;
+
+-- ===============================================
+-- TABLAS DE CONTROL DE ACCESO
+-- ===============================================
+
+-- Tabla: roles
+CREATE TABLE roles (
+    id_rol INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE,
+    descripcion TEXT,
+    activo BOOLEAN DEFAULT TRUE,
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabla: permisos
+CREATE TABLE permisos (
+    id_permiso INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE,
+    descripcion TEXT,
+    activo BOOLEAN DEFAULT TRUE
+);
+
+-- Tabla intermedia: rol_permiso
+CREATE TABLE rol_permiso (
+    id_rol_permiso INT AUTO_INCREMENT PRIMARY KEY,
+    id_rol INT NOT NULL,
+    id_permiso INT NOT NULL,
+    fecha_asignacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_rol) REFERENCES roles(id_rol) ON DELETE CASCADE,
+    FOREIGN KEY (id_permiso) REFERENCES permisos(id_permiso) ON DELETE CASCADE,
+    UNIQUE (id_rol, id_permiso) -- Evita duplicados
+);
+
+-- Tabla: usuarios
+CREATE TABLE usuarios (
+    id_usuario INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    contraseña VARCHAR(255) NOT NULL, -- Hash seguro (bcrypt/Argon2)
+    token VARCHAR(255) NULL,
+    id_rol INT NOT NULL DEFAULT 1, -- 1 será "Cliente"
+    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    activo BOOLEAN DEFAULT TRUE,
+    telefono VARCHAR(20) NULL, -- Nuevo campo para contacto
+    FOREIGN KEY (id_rol) REFERENCES roles(id_rol) ON DELETE RESTRICT,
+    INDEX idx_usuarios_email (email)
+);
+
+-- Tabla: intentos_login
+CREATE TABLE intentos_login (
+    id_intento INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NOT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    exito BOOLEAN NOT NULL,
+    ip VARCHAR(45),
+    dispositivo VARCHAR(255), -- Nuevo campo para rastrear dispositivo
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+    INDEX idx_intentos_usuario (id_usuario, fecha)
+);
+
+-- Tabla: direcciones
+CREATE TABLE direcciones (
+    id_direccion INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NOT NULL,
+    direccion VARCHAR(255) NOT NULL,
+    ciudad VARCHAR(100) NOT NULL,
+    codigo_postal VARCHAR(20) NOT NULL,
+    pais CHAR(2) NOT NULL, -- Código ISO 3166-1 alpha-2 (ej. "AR", "MX")
+    activo BOOLEAN DEFAULT TRUE,
+    es_predeterminada BOOLEAN DEFAULT FALSE, -- Nueva funcionalidad
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+    INDEX idx_direcciones_usuario (id_usuario)
+);
+
+-- ===============================================
+-- TABLAS DE PROVEEDORES E INVENTARIO
+-- ===============================================
+
+-- Nueva tabla: proveedores
+CREATE TABLE proveedores (
+    id_proveedor INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    contacto VARCHAR(100),
+    telefono VARCHAR(20),
+    email VARCHAR(100),
+    direccion VARCHAR(255),
+    activo BOOLEAN DEFAULT TRUE,
+    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_proveedores_email (email)
+);
+
+-- Tabla: categorias
+CREATE TABLE categorias (
+    id_categoria INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    descripcion TEXT,
+    activo BOOLEAN DEFAULT TRUE,
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tabla: productos
+CREATE TABLE productos (
+    id_producto INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    descripcion TEXT,
+    precio DECIMAL(10,2) NOT NULL,
+    stock INT NOT NULL DEFAULT 0,
+    id_categoria INT NOT NULL,
+    id_proveedor INT NULL, -- Nuevo campo para trazabilidad
+    activo BOOLEAN DEFAULT TRUE,
+    unidad_medida ENUM('kg', 'unidad', 'paquete') NOT NULL DEFAULT 'kg', -- Nueva funcionalidad
+    FOREIGN KEY (id_categoria) REFERENCES categorias(id_categoria) ON DELETE RESTRICT,
+    FOREIGN KEY (id_proveedor) REFERENCES proveedores(id_proveedor) ON DELETE SET NULL,
+    CONSTRAINT check_stock_positive CHECK (stock >= 0),
+    CONSTRAINT check_precio_positive CHECK (precio > 0),
+    INDEX idx_productos_categoria (id_categoria),
+    INDEX idx_productos_proveedor (id_proveedor)
+);
+
+-- Nueva tabla: historial_precios
+CREATE TABLE historial_precios (
+    id_historial_precio INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto INT NOT NULL,
+    precio DECIMAL(10,2) NOT NULL,
+    fecha_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_fin TIMESTAMP NULL,
+    id_usuario INT NULL, -- Quién cambió el precio
+    FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    CONSTRAINT check_precio_positive CHECK (precio > 0)
+);
+
+-- Nueva tabla: lotes
+CREATE TABLE lotes (
+    id_lote INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto INT NOT NULL,
+    id_proveedor INT NOT NULL,
+    codigo_lote VARCHAR(50) NOT NULL UNIQUE,
+    fecha_entrada TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_caducidad DATE NOT NULL,
+    cantidad INT NOT NULL,
+    activo BOOLEAN DEFAULT TRUE,
+    FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_proveedor) REFERENCES proveedores(id_proveedor) ON DELETE RESTRICT,
+    CONSTRAINT check_cantidad_lote CHECK (cantidad > 0),
+    INDEX idx_lotes_producto (id_producto)
+);
+
+-- Tabla: transformaciones
+CREATE TABLE transformaciones (
+    id_transformacion INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto_base INT NOT NULL,
+    id_producto_resultante INT NOT NULL,
+    cantidad_base DECIMAL(10,2) NOT NULL, -- Cambiado a DECIMAL para mayor precisión
+    cantidad_resultante DECIMAL(10,2) NOT NULL,
+    id_usuario INT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    id_lote INT NULL, -- Nuevo campo para trazabilidad
+    FOREIGN KEY (id_producto_base) REFERENCES productos(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_producto_resultante) REFERENCES productos(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    FOREIGN KEY (id_lote) REFERENCES lotes(id_lote) ON DELETE SET NULL,
+    CONSTRAINT check_cantidad_base CHECK (cantidad_base > 0),
+    CONSTRAINT check_cantidad_resultante CHECK (cantidad_resultante > 0)
+);
+
+-- Tabla: stock
+CREATE TABLE stock (
+    id_stock INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto INT NOT NULL,
+    id_lote INT NULL, -- Nuevo campo para asociar con lotes
+    cambio DECIMAL(10,2) NOT NULL, -- Cambiado a DECIMAL
+    motivo VARCHAR(255) NOT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    id_usuario INT NULL,
+    FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_lote) REFERENCES lotes(id_lote) ON DELETE SET NULL,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    INDEX idx_stock_producto (id_producto, fecha)
+);
+
+-- ===============================================
+-- TABLAS DE PEDIDOS Y DETALLES
+-- ===============================================
+
+-- Tabla: estados_pedido
+CREATE TABLE estados_pedido (
+    id_estado INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE,
+    descripcion TEXT,
+    activo BOOLEAN DEFAULT TRUE
+);
+
+-- Nueva tabla: tasas_impuestos
+CREATE TABLE tasas_impuestos (
+    id_tasa INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL,
+    porcentaje DECIMAL(5,2) NOT NULL,
+    pais CHAR(2) NOT NULL, -- Código ISO 3166-1 alpha-2
+    activo BOOLEAN DEFAULT TRUE,
+    fecha_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT check_porcentaje CHECK (porcentaje >= 0)
+);
+
+-- Nueva tabla: descuentos
+CREATE TABLE descuentos (
+    id_descuento INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL,
+    tipo ENUM('porcentaje', 'monto_fijo') NOT NULL,
+    valor DECIMAL(10,2) NOT NULL,
+    fecha_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_fin TIMESTAMP NULL,
+    activo BOOLEAN DEFAULT TRUE,
+    CONSTRAINT check_valor_descuento CHECK (valor >= 0)
+);
+
+-- Tabla: pedidos
+CREATE TABLE pedidos (
+    id_pedido INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NOT NULL,
+    direccion_id INT NULL,
+    id_tasa INT NULL, -- Nueva referencia a tasa de impuesto
+    id_descuento INT NULL, -- Nueva referencia a descuento
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    id_estado INT NOT NULL DEFAULT 1,
+    subtotal DECIMAL(10,2) NOT NULL DEFAULT 0, -- Nuevo campo
+    descuento DECIMAL(10,2) DEFAULT 0,
+    impuesto DECIMAL(10,2) DEFAULT 0,
+    total DECIMAL(10,2) NOT NULL DEFAULT 0,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+    FOREIGN KEY (direccion_id) REFERENCES direcciones(id_direccion) ON DELETE SET NULL,
+    FOREIGN KEY (id_estado) REFERENCES estados_pedido(id_estado) ON DELETE RESTRICT,
+    FOREIGN KEY (id_tasa) REFERENCES tasas_impuestos(id_tasa) ON DELETE SET NULL,
+    FOREIGN KEY (id_descuento) REFERENCES descuentos(id_descuento) ON DELETE SET NULL,
+    CONSTRAINT check_total_positive CHECK (total >= 0),
+    INDEX idx_pedidos_usuario (id_usuario)
+);
+
+-- Tabla: detalle_pedido
+CREATE TABLE detalle_pedido (
+    id_detalle INT AUTO_INCREMENT PRIMARY KEY,
+    id_pedido INT NOT NULL,
+    id_producto INT NOT NULL,
+    id_lote INT NULL, -- Nuevo campo para trazabilidad
+    cantidad DECIMAL(10,2) NOT NULL, -- Cambiado a DECIMAL
+    precio_unitario DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE,
+    FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE RESTRICT,
+    FOREIGN KEY (id_lote) REFERENCES lotes(id_lote) ON DELETE SET NULL,
+    CONSTRAINT check_cantidad_pedido CHECK (cantidad > 0),
+    CONSTRAINT check_precio_unitario CHECK (precio_unitario > 0)
+);
+
+-- Tabla: historial_pedidos
+CREATE TABLE historial_pedidos (
+    id_historial INT AUTO_INCREMENT PRIMARY KEY,
+    id_pedido INT NOT NULL,
+    id_estado INT NOT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    id_usuario INT NULL,
+    comentario TEXT,
+    FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE,
+    FOREIGN KEY (id_estado) REFERENCES estados_pedido(id_estado) ON DELETE RESTRICT,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    INDEX idx_historial_pedido (id_pedido)
+);
+
+-- Nueva tabla: auditoria
+CREATE TABLE auditoria (
+    id_auditoria INT AUTO_INCREMENT PRIMARY KEY,
+    tabla_afectada VARCHAR(50) NOT NULL,
+    id_registro INT NOT NULL,
+    accion ENUM('INSERT', 'UPDATE', 'DELETE') NOT NULL,
+    id_usuario INT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    datos_anteriores JSON NULL,
+    datos_nuevos JSON NULL,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL
+);
+
+-- ===============================================
+-- TRIGGERS
+-- ===============================================
+
+DELIMITER //
+
+-- Trigger para validar el total del pedido
+CREATE TRIGGER validar_total_pedido
+BEFORE UPDATE ON pedidos
+FOR EACH ROW
+BEGIN
+    DECLARE calculated_subtotal DECIMAL(10,2);
+    DECLARE calculated_impuesto DECIMAL(10,2);
+    DECLARE calculated_descuento DECIMAL(10,2);
+    
+    -- Calcular subtotal
+    SELECT SUM(cantidad * precio_unitario) INTO calculated_subtotal
+    FROM detalle_pedido
+    WHERE id_pedido = NEW.id_pedido;
+    
+    -- Calcular impuesto
+    SET calculated_impuesto = IFNULL(
+        (SELECT calculated_subtotal * (porcentaje / 100)
+         FROM tasas_impuestos
+         WHERE id_tasa = NEW.id_tasa), 0);
+    
+    -- Calcular descuento
+    SET calculated_descuento = IFNULL(
+        (SELECT CASE
+            WHEN tipo = 'porcentaje' THEN calculated_subtotal * (valor / 100)
+            ELSE valor
+        END
+        FROM descuentos
+        WHERE id_descuento = NEW.id_descunion
+    SET calculated_subtotal = IFNULL(calculated_subtotal, 0);
+    SET calculated_impuesto = IFNULL(calculated_impuesto, 0);
+    SET calculated_descuento = IFNULL(calculated_descuento, 0);
+    
+    IF NEW.total != (calculated_subtotal - calculated_descuento + calculated_impuesto) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El total del pedido no coincide con los detalles';
+    END IF;
+    
+    SET NEW.subtotal = calculated_subtotal;
+    SET NEW.impuesto = calculated_impuesto;
+    SET NEW.descuento = calculated_descuento;
+END //
+
+-- Trigger para actualizar stock tras movimientos en stock
+CREATE TRIGGER actualizar_stock
+AFTER INSERT ON stock
+FOR EACH ROW
+BEGIN
+    UPDATE productos
+    SET stock = stock + NEW.cambio
+    WHERE id_producto = NEW.id_producto;
+    
+    IF (SELECT stock FROM productos WHERE id_producto = NEW.id_producto) < 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Stock no puede ser negativo';
+    END IF;
+END //
+
+-- Trigger para registrar auditoría en productos
+CREATE TRIGGER auditoria_productos
+AFTER UPDATE ON productos
+FOR EACH ROW
+BEGIN
+    INSERT INTO auditoria (tabla_afectada, id_registro, accion, id_usuario, datos_anteriores, datos_nuevos)
+    VALUES (
+        'productos',
+        OLD.id_producto,
+        'UPDATE',
+        NULL, -- Asume que el id_usuario se pasa desde la aplicación
+        JSON_OBJECT('nombre', OLD.nombre, 'precio', OLD.precio, 'stock', OLD.stock),
+        JSON_OBJECT('nombre', NEW.nombre, 'precio', NEW.precio, 'stock', NEW.stock)
+    );
+END //
+
+DELIMITER ;
+
+-- ===============================================
+-- DATOS INICIALES
+-- ===============================================
+
+INSERT INTO roles (nombre, descripcion) VALUES
+('Cliente', 'Usuario con acceso básico para realizar pedidos'),
+('Administrador', 'Usuario con acceso completo al sistema'),
+('Vendedor', 'Usuario con permisos para gestionar pedidos y productos');
+
+INSERT INTO permisos (nombre, descripcion) VALUES
+('Gestionar usuarios', 'Permite crear, editar y eliminar usuarios'),
+('Gestionar productos', 'Permite agregar, editar y eliminar productos'),
+('Ver reportes', 'Permite acceder a reportes de ventas e inventario'),
+('Gestionar pedidos', 'Permite procesar y actualizar pedidos');
+
+INSERT INTO rol_permiso (id_rol, id_permiso) VALUES
+(2, 1), (2, 2), (2, 3), (2, 4), -- Administrador tiene todos los permisos
+(3, 2), (3, 4); -- Vendedor gestiona productos y pedidos
+
+INSERT INTO estados_pedido (nombre, descripcion) VALUES
+('Pendiente', 'Pedido registrado y pendiente de preparación'),
+('En preparación', 'El pedido se está preparando'),
+('Enviado', 'El pedido ha sido enviado al cliente'),
+('Entregado', 'El pedido fue entregado'),
+('Cancelado', 'El pedido fue cancelado');
+
+INSERT INTO tasas_impuestos (nombre, porcentaje, pais) VALUES
+('IVA 21%', 21.00, 'AR'),
+('IVA 16%', 16.00, 'MX');
+
+INSERT INTO descuentos (nombre, tipo, valor, fecha_fin) VALUES
+('Descuento 10% Navidad', 'porcentaje', 10.00, '2025-12-31 23:59:59'),
+('Descuento $50', 'monto_fijo', 50.00, NULL);

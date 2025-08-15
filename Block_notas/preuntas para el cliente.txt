@@ -1,0 +1,167 @@
+Preguntas que se le deben hacer al cliente
+
+van dentro de la epica #7 carrito y proceso de compra
+
+HU 3.4 – Selección de método de pago
+Como cliente, quiero elegir entre varias opciones de pago para completar mi compra.
+Criterios: Mostrar opciones (tarjeta, efectivo, transferencia). Validar método seleccionado.
+
+HU 3.5 – Cancelación de pedido
+Como cliente, quiero poder cancelar un pedido antes de que sea procesado.
+Criterios: Permitir cancelación mientras pedido esté en estado "pendiente". Confirmación de cancelación.
+
+va dentro de la epica #19 Gestion de clientes
+
+Gestión de direcciones de envío: Como cliente, quiero agregar y editar mis direcciones para facilitar envíos.
+Criterios: Añadir, editar, eliminar direcciones.
+
+va dentor de la epica #22 Ofertas y promociones
+
+HU 7.3 – Promociones por volumen
+Como administrador, quiero crear promociones por compra de cantidad (ej. 3x2).
+Criterios: Definir cantidad mínima y precio especial.
+
+
+ChatGPT
+
+🔍 1. Información general del negocio
+
+¿Cuál es el nombre y la historia de la tienda?
+
+¿Qué productos venden exactamente (tipos de carne, cortes, pollo, embutidos, etc.)?
+
+¿Cuál es el público objetivo? (familias, restaurantes, minoristas, etc.)
+
+¿Qué zonas geográficas cubren actualmente?
+
+¿Qué diferencia a su tienda de la competencia?
+
+¿Cuáles son sus horarios de atención actuales?
+
+¿Desean vender solo en su ciudad o hacer envíos nacionales?
+
+
+
+🛒 2. Catálogo de productos
+
+¿Cuántos productos planean ofrecer en la tienda online?
+
+¿Cómo se gestionan actualmente los inventarios?
+
+¿Cada producto tiene variaciones? (peso, tipo de corte, empacado)
+
+¿Necesitan mostrar fotos de cada producto?
+
+¿Quién tomará y subirá las fotos?
+
+¿Qué información mínima debe tener cada producto? (precio por kilo, descripción, origen, etc.)
+
+
+
+💸 3. Precios y promociones
+
+¿Cómo calculan los precios? (precio fijo, por peso, por paquete)
+
+¿Quieren permitir compras por peso exacto?
+
+¿Ofrecen descuentos o promociones? ¿Serán automáticos o con cupones?
+
+¿Desean precios diferenciados para clientes mayoristas?
+
+¿Tienen precios variables según la temporada?
+
+
+
+📦 4. Pedidos y envíos
+
+
+¿Cómo gestionan actualmente los pedidos? (teléfono, WhatsApp, presencial)
+
+¿Qué método de entrega usan? (propio, terceros)
+
+¿Ofrecen entrega a domicilio? ¿En qué horarios?
+
+¿Cobran envío? ¿Cuánto y cómo se calcula?
+
+¿Permitirán retiros en tienda?
+
+¿Qué embalaje usan? ¿Desean mostrar opciones?
+
+
+
+💳 5. Pagos
+¿Qué métodos de pago aceptan actualmente? (efectivo, transferencia, tarjetas)
+
+¿Qué métodos de pago quieren habilitar online? (tarjeta, contraentrega, billeteras electrónicas)
+
+¿Quieren permitir pagos parciales o apartados?
+
+¿Necesitan emitir factura electrónica automática?
+
+
+
+👥 6. Usuarios y roles
+
+¿Los clientes deben registrarse para comprar?
+
+¿Qué datos deben registrar los clientes?
+
+¿Permitirán compras como invitado?
+
+¿Quieren un panel para que los clientes consulten pedidos anteriores?
+
+¿Habrá roles de administrador, vendedor, repartidor?
+
+
+
+📈 7. Marketing y comunicación
+
+¿Quieren integrar la tienda con redes sociales?
+
+¿Desean enviar correos de confirmación y notificaciones?
+
+¿Planean usar newsletters?
+
+¿Quieren cupones de descuento o programas de fidelidad?
+
+¿Desean integrar chat en vivo o WhatsApp?
+
+
+
+⚙️ 8. Aspectos técnicos
+
+¿Tienen dominio y hosting?
+
+¿Desean que se integre con su sistema actual de facturación o inventario?
+
+¿Quién administrará el contenido de la tienda?
+
+¿Necesitan estadísticas o reportes de ventas?
+
+¿Quién dará soporte técnico?
+
+
+
+🔒 9. Seguridad y aspectos legales
+
+¿Cómo manejarán la protección de datos de los clientes?
+
+¿Quieren políticas de privacidad y devoluciones?
+
+¿Hay requisitos legales de manipulación de alimentos que deban mostrar?
+
+¿Desean integrar términos y condiciones claros?
+
+
+
+🎯 10. Expectativas del proyecto
+
+¿Cuál es la meta principal de la tienda online? (vender más, llegar a nuevos clientes, fidelizar)
+
+¿Qué funcionalidades son indispensables para ustedes?
+
+¿Cuál es el presupuesto aproximado para el desarrollo?
+
+¿Cuál es el plazo ideal de lanzamiento?
+
+¿Quién tomará decisiones clave durante el proyecto?

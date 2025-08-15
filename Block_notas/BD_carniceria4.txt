@@ -1,0 +1,648 @@
+-- ============================================================================
+-- Base de datos: carniceria_db (MySQL 8.x)
+-- Esquema en español, normalizado (3FN). Ajusta según tus políticas de seguridad.
+-- ============================================================================
+
+CREATE DATABASE IF NOT EXISTS carniceria_db
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE carniceria_db;
+
+SET sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+
+-- ========================================================================
+-- TABLAS: CONTROL DE ACCESO
+-- ========================================================================
+
+CREATE TABLE roles (
+  id_rol INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(50) NOT NULL UNIQUE,
+  descripcion TEXT,
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE permisos (
+  id_permiso INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL UNIQUE,
+  descripcion TEXT,
+  activo BOOLEAN NOT NULL DEFAULT TRUE
+) ENGINE=InnoDB;
+
+CREATE TABLE rol_permiso (
+  id_rol_permiso INT AUTO_INCREMENT PRIMARY KEY,
+  id_rol INT NOT NULL,
+  id_permiso INT NOT NULL,
+  fecha_asignacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_rol_permiso (id_rol, id_permiso),
+  CONSTRAINT fk_rp_rol FOREIGN KEY (id_rol) REFERENCES roles(id_rol) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_rp_permiso FOREIGN KEY (id_permiso) REFERENCES permisos(id_permiso) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE usuarios (
+  id_usuario INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(150) NOT NULL,
+  email VARCHAR(150) NOT NULL UNIQUE,
+  clave_hash VARCHAR(255) NOT NULL, -- almacenar hash seguro desde backend
+  telefono VARCHAR(30),
+  token_sesion VARCHAR(255) NULL,
+  id_rol INT NOT NULL DEFAULT 1, -- 1 = Cliente por defecto
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  fecha_registro TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_usuarios_rol FOREIGN KEY (id_rol) REFERENCES roles(id_rol) ON DELETE RESTRICT ON UPDATE CASCADE,
+  INDEX idx_usuario_email (email)
+) ENGINE=InnoDB;
+
+CREATE TABLE intentos_login (
+  id_intento INT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario INT NULL,
+  fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  exito BOOLEAN NOT NULL,
+  ip VARCHAR(45),
+  dispositivo VARCHAR(255),
+  CONSTRAINT fk_intento_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE direcciones (
+  id_direccion INT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario INT NOT NULL,
+  direccion VARCHAR(255) NOT NULL,
+  ciudad VARCHAR(100) NOT NULL,
+  codigo_postal VARCHAR(20),
+  pais CHAR(2) NOT NULL,
+  es_predeterminada BOOLEAN NOT NULL DEFAULT FALSE,
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  CONSTRAINT fk_direccion_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ========================================================================
+-- TABLAS: PROVEEDORES, CATEGORIAS, PRODUCTOS, LOTES, HISTORIAL DE PRECIOS
+-- ========================================================================
+
+CREATE TABLE proveedores (
+  id_proveedor INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(150) NOT NULL,
+  contacto VARCHAR(150),
+  telefono VARCHAR(30),
+  email VARCHAR(150),
+  direccion VARCHAR(255),
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  fecha_registro TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_proveedor_email (email)
+) ENGINE=InnoDB;
+
+CREATE TABLE categorias (
+  id_categoria INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL,
+  descripcion TEXT,
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_categoria_nombre (nombre)
+) ENGINE=InnoDB;
+
+CREATE TABLE productos (
+  id_producto INT AUTO_INCREMENT PRIMARY KEY,
+  codigo VARCHAR(50) NULL,
+  nombre VARCHAR(150) NOT NULL,
+  descripcion TEXT,
+  id_categoria INT NOT NULL,
+  id_proveedor INT NULL,
+  precio_unitario DECIMAL(12,2) NOT NULL CHECK (precio_unitario > 0),
+  unidad_medida ENUM('kg','unidad','paquete') NOT NULL DEFAULT 'kg',
+  stock_total DECIMAL(12,3) NOT NULL DEFAULT 0, -- en la unidad indicada (kg o unidades)
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  fecha_creacion TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_productos_categoria FOREIGN KEY (id_categoria) REFERENCES categorias(id_categoria) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_productos_proveedor FOREIGN KEY (id_proveedor) REFERENCES proveedores(id_proveedor) ON DELETE SET NULL ON UPDATE CASCADE,
+  INDEX idx_productos_categoria (id_categoria),
+  INDEX idx_productos_proveedor (id_proveedor),
+  INDEX idx_productos_codigo (codigo)
+) ENGINE=InnoDB;
+
+CREATE TABLE historial_precios (
+  id_historial_precio INT AUTO_INCREMENT PRIMARY KEY,
+  id_producto INT NOT NULL,
+  precio DECIMAL(12,2) NOT NULL CHECK (precio > 0),
+  fecha_inicio TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_fin TIMESTAMP NULL,
+  id_usuario INT NULL,
+  CONSTRAINT fk_histprecio_producto FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE CASCADE,
+  CONSTRAINT fk_histprecio_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE lotes (
+  id_lote INT AUTO_INCREMENT PRIMARY KEY,
+  id_producto INT NOT NULL,
+  id_proveedor INT NOT NULL,
+  codigo_lote VARCHAR(80) NOT NULL,
+  fecha_entrada TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_caducidad DATE NULL,
+  cantidad DECIMAL(12,3) NOT NULL CHECK (cantidad > 0),
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  CONSTRAINT fk_lote_producto FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE CASCADE,
+  CONSTRAINT fk_lote_proveedor FOREIGN KEY (id_proveedor) REFERENCES proveedores(id_proveedor) ON DELETE RESTRICT,
+  UNIQUE KEY uq_lote_codigo (codigo_lote),
+  INDEX idx_lotes_producto (id_producto)
+) ENGINE=InnoDB;
+
+-- ========================================================================
+-- TABLAS: TRANSFORMACIONES Y MOVIMIENTOS DE STOCK
+-- ========================================================================
+
+CREATE TABLE transformaciones (
+  id_transformacion INT AUTO_INCREMENT PRIMARY KEY,
+  id_producto_origen INT NOT NULL,
+  id_producto_resultante INT NOT NULL,
+  cantidad_origen DECIMAL(12,3) NOT NULL CHECK (cantidad_origen > 0),
+  cantidad_resultante DECIMAL(12,3) NOT NULL CHECK (cantidad_resultante >= 0),
+  id_lote_origen INT NULL,
+  id_lote_resultante INT NULL,
+  id_usuario INT NULL,
+  fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  nota TEXT,
+  CONSTRAINT fk_trans_origen_producto FOREIGN KEY (id_producto_origen) REFERENCES productos(id_producto) ON DELETE CASCADE,
+  CONSTRAINT fk_trans_result_producto FOREIGN KEY (id_producto_resultante) REFERENCES productos(id_producto) ON DELETE CASCADE,
+  CONSTRAINT fk_trans_lote_origen FOREIGN KEY (id_lote_origen) REFERENCES lotes(id_lote) ON DELETE SET NULL,
+  CONSTRAINT fk_trans_lote_result FOREIGN KEY (id_lote_resultante) REFERENCES lotes(id_lote) ON DELETE SET NULL,
+  CONSTRAINT fk_trans_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE movimientos_stock (
+  id_movimiento BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_producto INT NOT NULL,
+  id_lote INT NULL,
+  tipo_movimiento ENUM('ingreso','salida','ajuste','transformacion_entrada','transformacion_salida') NOT NULL,
+  cantidad DECIMAL(12,3) NOT NULL,
+  unidad VARCHAR(20) NOT NULL,
+  referencia_tipo VARCHAR(60) NULL,
+  referencia_id BIGINT NULL,
+  motivo VARCHAR(255) NULL,
+  id_usuario INT NULL,
+  fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_mov_producto FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE CASCADE,
+  CONSTRAINT fk_mov_lote FOREIGN KEY (id_lote) REFERENCES lotes(id_lote) ON DELETE SET NULL,
+  CONSTRAINT fk_mov_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+  INDEX idx_mov_prod_fecha (id_producto, fecha)
+) ENGINE=InnoDB;
+
+-- ========================================================================
+-- TABLAS: PEDIDOS, DETALLES, ESTADOS, HISTORIAL
+-- ========================================================================
+
+CREATE TABLE estados_pedido (
+  id_estado INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(50) NOT NULL UNIQUE,
+  descripcion TEXT,
+  activo BOOLEAN NOT NULL DEFAULT TRUE
+) ENGINE=InnoDB;
+
+CREATE TABLE tasas_impuestos (
+  id_tasa INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(80) NOT NULL,
+  porcentaje DECIMAL(5,2) NOT NULL CHECK (porcentaje >= 0),
+  pais CHAR(2) NOT NULL,
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  fecha_inicio TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE descuentos (
+  id_descuento INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL,
+  tipo ENUM('porcentaje','monto_fijo') NOT NULL,
+  valor DECIMAL(12,2) NOT NULL CHECK (valor >= 0),
+  fecha_inicio TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha_fin TIMESTAMP NULL,
+  activo BOOLEAN NOT NULL DEFAULT TRUE
+) ENGINE=InnoDB;
+
+CREATE TABLE pedidos (
+  id_pedido BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario INT NOT NULL,
+  id_direccion INT NULL,
+  id_tasa INT NULL,
+  id_descuento INT NULL,
+  fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  id_estado INT NOT NULL DEFAULT 1,
+  subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+  descuento DECIMAL(12,2) NOT NULL DEFAULT 0,
+  impuesto DECIMAL(12,2) NOT NULL DEFAULT 0,
+  total DECIMAL(12,2) NOT NULL DEFAULT 0,
+  peso_total DECIMAL(12,3) NOT NULL DEFAULT 0, -- peso total real entregado (kg)
+  CONSTRAINT fk_pedido_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+  CONSTRAINT fk_pedido_direccion FOREIGN KEY (id_direccion) REFERENCES direcciones(id_direccion) ON DELETE SET NULL,
+  CONSTRAINT fk_pedido_estado FOREIGN KEY (id_estado) REFERENCES estados_pedido(id_estado) ON DELETE RESTRICT,
+  CONSTRAINT fk_pedido_tasa FOREIGN KEY (id_tasa) REFERENCES tasas_impuestos(id_tasa) ON DELETE SET NULL,
+  CONSTRAINT fk_pedido_desc FOREIGN KEY (id_descuento) REFERENCES descuentos(id_descuento) ON DELETE SET NULL,
+  CHECK (total >= 0),
+  INDEX idx_pedidos_usuario (id_usuario),
+  INDEX idx_pedidos_fecha (fecha)
+) ENGINE=InnoDB;
+
+CREATE TABLE detalle_pedido (
+  id_detalle BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_pedido BIGINT NOT NULL,
+  id_producto INT NOT NULL,
+  id_lote INT NULL,
+  peso_solicitado DECIMAL(12,3) NOT NULL, -- en kg
+  peso_real DECIMAL(12,3) NULL, -- en kg (ingresado al pesarlo)
+  precio_unitario DECIMAL(12,2) NOT NULL,
+  subtotal DECIMAL(12,2) NOT NULL,
+  CONSTRAINT fk_det_pedido_pedido FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE,
+  CONSTRAINT fk_det_pedido_producto FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE RESTRICT,
+  CONSTRAINT fk_det_pedido_lote FOREIGN KEY (id_lote) REFERENCES lotes(id_lote) ON DELETE SET NULL,
+  CHECK (peso_solicitado > 0),
+  CHECK (precio_unitario > 0),
+  INDEX idx_detpedido_pedido (id_pedido)
+) ENGINE=InnoDB;
+
+CREATE TABLE historial_pedidos (
+  id_historial BIGINT AUTO_INCREMENT PRIMARY KEY,
+  id_pedido BIGINT NOT NULL,
+  id_estado INT NOT NULL,
+  id_usuario INT NULL,
+  comentario TEXT,
+  fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_hist_ped_pedido FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE,
+  CONSTRAINT fk_hist_ped_estado FOREIGN KEY (id_estado) REFERENCES estados_pedido(id_estado) ON DELETE RESTRICT,
+  CONSTRAINT fk_hist_ped_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+  INDEX idx_historial_pedido (id_pedido)
+) ENGINE=InnoDB;
+
+-- ========================================================================
+-- TABLA: AUDITORÍA
+-- ========================================================================
+
+CREATE TABLE auditoria (
+  id_auditoria BIGINT AUTO_INCREMENT PRIMARY KEY,
+  tabla_afectada VARCHAR(100) NOT NULL,
+  id_registro BIGINT NOT NULL,
+  accion ENUM('INSERT','UPDATE','DELETE') NOT NULL,
+  id_usuario INT NULL,
+  fecha TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  datos_anteriores JSON NULL,
+  datos_nuevos JSON NULL,
+  CONSTRAINT fk_auditoria_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- ========================================================================
+-- TRIGGERS Y PROCEDIMIENTOS CLAVE
+-- ========================================================================
+
+DELIMITER $$
+
+-- Trigger: validar totales del pedido (antes de insertar/actualizar)
+CREATE TRIGGER trg_validar_totales_pedido
+BEFORE INSERT ON pedidos
+FOR EACH ROW
+BEGIN
+  -- Subtotal e impuestos serán calculados por la aplicación o mediante procedimiento;
+  -- aquí solo se garantiza que total no sea negativo.
+  IF NEW.total < 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Total del pedido no puede ser negativo';
+  END IF;
+END$$
+
+-- Trigger: despues de insertar un movimiento de stock actualiza stock_total en productos
+CREATE TRIGGER trg_actualizar_stock_producto
+AFTER INSERT ON movimientos_stock
+FOR EACH ROW
+BEGIN
+  -- actualizar stock_total (suma o resta según signo de cantidad)
+  UPDATE productos
+    SET stock_total = stock_total + NEW.cantidad
+  WHERE id_producto = NEW.id_producto;
+
+  -- evitar stock negativo
+  IF (SELECT stock_total FROM productos WHERE id_producto = NEW.id_producto) < 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock no puede quedar negativo';
+  END IF;
+END$$
+
+-- Trigger: auditoría para actualizaciones en productos
+CREATE TRIGGER trg_auditoria_productos
+AFTER UPDATE ON productos
+FOR EACH ROW
+BEGIN
+  INSERT INTO auditoria (tabla_afectada, id_registro, accion, id_usuario, datos_anteriores, datos_nuevos)
+  VALUES (
+    'productos',
+    OLD.id_producto,
+    'UPDATE',
+    NULL,
+    JSON_OBJECT('nombre', OLD.nombre, 'precio_unitario', OLD.precio_unitario, 'stock_total', OLD.stock_total),
+    JSON_OBJECT('nombre', NEW.nombre, 'precio_unitario', NEW.precio_unitario, 'stock_total', NEW.stock_total)
+  );
+END$$
+
+-- Procedimiento: realizar transformación atómica (origen -> resultante)
+CREATE PROCEDURE sp_realizar_transformacion(
+  IN p_usuario INT,
+  IN p_producto_origen INT,
+  IN p_cantidad_origen DECIMAL(12,3),
+  IN p_producto_resultado INT,
+  IN p_cantidad_resultado DECIMAL(12,3),
+  IN p_id_lote_origen INT
+)
+BEGIN
+  DECLARE v_id_trans BIGINT;
+  DECLARE v_stock_orig DECIMAL(12,3);
+
+  -- validar cantidades
+  IF p_cantidad_origen <= 0 OR p_cantidad_resultado < 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Cantidades inválidas';
+  END IF;
+
+  START TRANSACTION;
+
+  -- verificar stock disponible (fila bloqueada)
+  SELECT stock_total INTO v_stock_orig FROM productos WHERE id_producto = p_producto_origen FOR UPDATE;
+  IF v_stock_orig IS NULL THEN
+    ROLLBACK;
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Producto origen no encontrado';
+  END IF;
+
+  IF v_stock_orig < p_cantidad_origen THEN
+    ROLLBACK;
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock insuficiente para transformación';
+  END IF;
+
+  -- insertar transformación
+  INSERT INTO transformaciones (id_producto_origen, id_producto_resultante, cantidad_origen, cantidad_resultante, id_lote_origen, id_usuario)
+  VALUES (p_producto_origen, p_producto_resultado, p_cantidad_origen, p_cantidad_resultado, p_id_lote_origen, p_usuario);
+  SET v_id_trans = LAST_INSERT_ID();
+
+  -- registrar movimientos: salida origen y entrada resultado
+  INSERT INTO movimientos_stock (id_producto, id_lote, tipo_movimiento, cantidad, unidad, referencia_tipo, referencia_id, motivo, id_usuario)
+    VALUES (p_producto_origen, p_id_lote_origen, 'transformacion_salida', -p_cantidad_origen, 'kg', 'transformacion', v_id_trans, 'Transformacion manual', p_usuario);
+
+  INSERT INTO movimientos_stock (id_producto, id_lote, tipo_movimiento, cantidad, unidad, referencia_tipo, referencia_id, motivo, id_usuario)
+    VALUES (p_producto_resultado, NULL, 'transformacion_entrada', p_cantidad_resultado, 'unidad', 'transformacion', v_id_trans, 'Transformacion manual', p_usuario);
+
+  COMMIT;
+END$$
+
+DELIMITER ;
+
+-- ========================================================================
+-- DATOS INICIALES (ejemplos)
+-- ========================================================================
+
+-- Roles
+INSERT INTO roles (nombre, descripcion) VALUES
+('Cliente', 'Usuario con acceso básico para realizar pedidos'),
+('Administrador', 'Usuario con acceso completo al sistema'),
+('Vendedor', 'Usuario que gestiona ventas y pedidos');
+
+-- Permisos (ejemplo)
+INSERT INTO permisos (nombre, descripcion) VALUES
+('Gestionar usuarios', 'Crear, editar y eliminar usuarios'),
+('Gestionar productos', 'Crear, editar y eliminar productos'),
+('Ver reportes', 'Acceder a reportes de ventas e inventario'),
+('Gestionar pedidos', 'Procesar, actualizar y cancelar pedidos');
+
+-- Asignar permisos a administrador (rol 2)
+INSERT INTO rol_permiso (id_rol, id_permiso)
+SELECT 2, id_permiso FROM permisos;
+
+-- Categorías ejemplo
+INSERT INTO categorias (nombre, descripcion) VALUES
+('Carnes', 'Cortes y piezas de res y cerdo'),
+('Pollo', 'Piezas y cortes de pollo'),
+('Procesados', 'Chorizos, hamburguesas y similares');
+
+-- Proveedores ejemplo
+INSERT INTO proveedores (nombre, contacto, telefono, email) VALUES
+('Proveedor A', 'Contacto A', '3001112222', 'proveedorA@ejemplo.com'),
+('Proveedor B', 'Contacto B', '3002223333', 'proveedorB@ejemplo.com');
+
+-- Productos ejemplo
+INSERT INTO productos (codigo, nombre, descripcion, id_categoria, id_proveedor, precio_unitario, unidad_medida, stock_total)
+VALUES
+('C001','Carne de Res 1kg','Corte de res - 1kg aprox',1,1,25000,'kg',50.000),
+('P001','Pechuga de Pollo 1kg','Pechuga sin hueso',2,2,18000,'kg',30.000),
+('PR001','Chorizo unidad','Chorizo artesanal',3,2,1200,'unidad',0.000);
+
+-- Lotes ejemplo
+INSERT INTO lotes (id_producto, id_proveedor, codigo_lote, fecha_caducidad, cantidad)
+VALUES (1,1,'L-CR-202508', '2025-08-30', 50.000);
+
+-- Movimientos iniciales para poblado de stock (ingreso)
+INSERT INTO movimientos_stock (id_producto, id_lote, tipo_movimiento, cantidad, unidad, motivo, id_usuario)
+VALUES (1, 1, 'ingreso', 50.000, 'kg', 'Ingreso inicial', NULL);
+
+-- Estados de pedido
+INSERT INTO estados_pedido (nombre, descripcion) VALUES
+('Pendiente','Pedido registrado y pendiente de preparacion'),
+('En preparación','Pedido en proceso de preparación'),
+('Enviado','Pedido enviado'),
+('Entregado','Pedido entregado'),
+('Cancelado','Pedido cancelado');
+
+-- Tasas de impuestos ejemplo
+INSERT INTO tasas_impuestos (nombre, porcentaje, pais) VALUES
+('IVA 19%', 19.00, 'CO'),
+('IVA 21%', 21.00, 'AR');
+
+-- Descuentos ejemplo
+INSERT INTO descuentos (nombre, tipo, valor) VALUES
+('Descuento 10% Navidad','porcentaje',10.00),
+('Descuento $50','monto_fijo',50.00);
+
+-- Usuario administrador de ejemplo (REEMPLAZAR HASH)
+INSERT INTO usuarios (nombre, email, clave_hash, telefono, id_rol)
+VALUES ('Administrador General','admin@carniceria.com','HASH_PASSWORD_ADMIN','3000000000',2);
+
+-- Usuario cliente ejemplo (REEMPLAZAR HASH)
+INSERT INTO usuarios (nombre, email, clave_hash, telefono, id_rol)
+VALUES ('Cliente Prueba','cliente@ejemplo.com','HASH_PASSWORD_CLIENTE','3001112222',1);
+
+-- ============================================================================
+-- FIN DEL SCRIPT
+-- ============================================================================
+
+
+
+-- ===========================================================
+-- Añadir: pedidos, detalle_pedido y ajustes_inventario + triggers
+-- ===========================================================
+USE carniceria_db;
+
+-- 1) Tabla pedidos (si no existe)
+CREATE TABLE IF NOT EXISTS pedidos (
+  id_pedido INT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario INT NULL, -- cliente (referencia a usuarios)
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  estado ENUM('pendiente','procesado','cancelado') NOT NULL DEFAULT 'pendiente',
+  total DECIMAL(12,2) NOT NULL DEFAULT 0,
+  -- peso total real entregado (kg) para control/reportes
+  peso_total DECIMAL(12,3) NOT NULL DEFAULT 0,
+  CONSTRAINT fk_pedidos_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE INDEX IF NOT EXISTS idx_pedidos_usuario ON pedidos(id_usuario);
+CREATE INDEX IF NOT EXISTS idx_pedidos_fecha ON pedidos(fecha);
+
+-- 2) Tabla detalle_pedido (si no existe)
+CREATE TABLE IF NOT EXISTS detalle_pedido (
+  id_detalle INT AUTO_INCREMENT PRIMARY KEY,
+  id_pedido INT NOT NULL,
+  id_producto INT NOT NULL,
+  id_lote INT NULL,
+  peso_solicitado DECIMAL(12,3) NOT NULL, -- en kg (ej: 2.055)
+  peso_real DECIMAL(12,3) NULL,            -- en kg, se actualiza al pesar
+  precio_unitario DECIMAL(12,2) NOT NULL,
+  subtotal DECIMAL(12,2) NOT NULL,
+  CONSTRAINT fk_detpedido_pedido FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE,
+  CONSTRAINT fk_detpedido_producto FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE RESTRICT,
+  CONSTRAINT fk_detpedido_lote FOREIGN KEY (id_lote) REFERENCES lotes(id_lote) ON DELETE SET NULL,
+  CHECK (peso_solicitado > 0),
+  CHECK (precio_unitario > 0)
+) ENGINE=InnoDB;
+
+CREATE INDEX IF NOT EXISTS idx_detpedido_pedido ON detalle_pedido(id_pedido);
+
+-- 3) Tabla ajustes_inventario (si no existe)
+CREATE TABLE IF NOT EXISTS ajustes_inventario (
+  id_ajuste INT AUTO_INCREMENT PRIMARY KEY,
+  id_producto INT NOT NULL,
+  cantidad_solicitada DECIMAL(12,3) NOT NULL, -- en kg
+  cantidad_real DECIMAL(12,3) NOT NULL,      -- en kg
+  diferencia DECIMAL(12,3) NOT NULL,         -- cantidad_real - cantidad_solicitada
+  fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  id_pedido INT NULL,
+  motivo ENUM('excedente','faltante') NOT NULL,
+  CONSTRAINT fk_ajuste_producto FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE CASCADE,
+  CONSTRAINT fk_ajuste_pedido FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE INDEX IF NOT EXISTS idx_ajuste_producto ON ajustes_inventario(id_producto);
+CREATE INDEX IF NOT EXISTS idx_ajuste_pedido ON ajustes_inventario(id_pedido);
+
+-- ===========================================================
+-- TRIGGERS
+--  - al INSERT detalle_pedido: crear movimiento de reserva (salida)
+--  - al UPDATE detalle_pedido (cuando se setea/actualiza peso_real):
+--       -> insertar registro en ajustes_inventario
+--       -> insertar movimiento de ajuste en movimientos_stock
+-- Nota: se asume que existe la tabla movimientos_stock y su trigger
+--       que actualiza productos.stock_total al insertar movimientos.
+-- ===========================================================
+
+-- Asegurarse de eliminar triggers previos para no fallar al redeploy
+DROP TRIGGER IF EXISTS trg_detalle_pedido_reservar;
+DROP TRIGGER IF EXISTS trg_detalle_pedido_ajustar;
+
+DELIMITER $$
+
+-- TRIGGER: reservar stock al insertar detalle_pedido (salida = reserva)
+CREATE TRIGGER trg_detalle_pedido_reservar
+AFTER INSERT ON detalle_pedido
+FOR EACH ROW
+BEGIN
+  DECLARE v_unidad VARCHAR(20);
+  -- Obtener unidad de medida del producto (kg/unidad/paquete)
+  SELECT unidad_medida INTO v_unidad FROM productos WHERE id_producto = NEW.id_producto LIMIT 1;
+
+  -- Inserta movimiento de reserva (salida) con cantidad negativa
+  INSERT INTO movimientos_stock
+    (id_producto, id_lote, tipo_movimiento, cantidad, unidad, referencia_tipo, referencia_id, motivo, id_usuario)
+  VALUES
+    (NEW.id_producto, NEW.id_lote, 'salida', -NEW.peso_solicitado, IFNULL(v_unidad,'kg'), 'detalle_pedido', NEW.id_pedido, 'Reserva por pedido (peso solicitado)', NULL);
+END$$
+
+-- TRIGGER: ajustar inventario cuando se actualiza peso_real
+CREATE TRIGGER trg_detalle_pedido_ajustar
+AFTER UPDATE ON detalle_pedido
+FOR EACH ROW
+BEGIN
+  DECLARE v_base DECIMAL(12,3);
+  DECLARE v_diff DECIMAL(12,3);
+  DECLARE v_unidad VARCHAR(20);
+
+  -- Solo actuar si peso_real fue cambiado y nuevo peso_real no es NULL
+  IF (NEW.peso_real IS NOT NULL) AND (OLD.peso_real IS NULL OR NEW.peso_real <> OLD.peso_real) THEN
+
+    -- Determinar la base para calcular la diferencia:
+    -- si ya había un OLD.peso_real, la base es OLD.peso_real (reajuste),
+    -- si no, la base es peso_solicitado (se reserva eso al insertar)
+    IF OLD.peso_real IS NOT NULL THEN
+      SET v_base = OLD.peso_real;
+    ELSE
+      SET v_base = NEW.peso_solicitado;
+    END IF;
+
+    SET v_diff = NEW.peso_real - v_base; -- positivo = se entregó más; negativo = se entregó menos
+
+    -- Registrar el ajuste en la tabla de ajustes_inventario (si hay diferencia)
+    IF v_diff <> 0 THEN
+      INSERT INTO ajustes_inventario (id_producto, cantidad_solicitada, cantidad_real, diferencia, id_pedido, motivo)
+      VALUES (
+        NEW.id_producto,
+        NEW.peso_solicitado,
+        NEW.peso_real,
+        v_diff,
+        NEW.id_pedido,
+        CASE WHEN v_diff > 0 THEN 'excedente' ELSE 'faltante' END
+      );
+
+      -- Obtener unidad del producto
+      SELECT unidad_medida INTO v_unidad FROM productos WHERE id_producto = NEW.id_producto LIMIT 1;
+
+      -- Insertar movimiento de ajuste.
+      -- Recordar: en movimientos_stock la columna cantidad se suma al stock_total,
+      -- como al reservar ya se insertó -peso_solicitado, necesitamos sumar -(peso_real - base)
+      -- para que stock_total refleje -peso_real total.
+      INSERT INTO movimientos_stock
+        (id_producto, id_lote, tipo_movimiento, cantidad, unidad, referencia_tipo, referencia_id, motivo, id_usuario)
+      VALUES
+        (NEW.id_producto, NEW.id_lote, 'ajuste', -v_diff, IFNULL(v_unidad,'kg'), 'detalle_pedido', NEW.id_pedido,
+         CONCAT('Ajuste por peso real (detalle ', NEW.id_detalle, ')'), NULL);
+    END IF;
+
+    -- Opcional: actualizar subtotal y total si la lógica del precio se maneja desde BD.
+    -- En este diseño la capa de aplicación debería recalcular subtotal/total basado en peso_real.
+  END IF;
+END$$
+
+DELIMITER ;
+
+-- ===========================================================
+-- (Opcional) Trigger para liberar reservas si un pedido es cancelado
+-- Inserta movimientos para devolver lo reservado por cada detalle.
+-- Ajusta según tus estados (aquí se compara string 'cancelado').
+-- ===========================================================
+DROP TRIGGER IF EXISTS trg_pedido_cancelar_reintegro;
+DELIMITER $$
+CREATE TRIGGER trg_pedido_cancelar_reintegro
+AFTER UPDATE ON pedidos
+FOR EACH ROW
+BEGIN
+  DECLARE v_nombre_estado VARCHAR(50);
+
+  -- Si el estado cambió a 'cancelado', devolver reservas
+  IF (NEW.estado <> OLD.estado) THEN
+    SET v_nombre_estado = NEW.estado;
+    IF v_nombre_estado = 'cancelado' THEN
+      -- Para cada detalle del pedido, insertar movimiento que sume lo reservado (reintegro)
+      INSERT INTO movimientos_stock (id_producto, id_lote, tipo_movimiento, cantidad, unidad, referencia_tipo, referencia_id, motivo, id_usuario)
+      SELECT dp.id_producto, dp.id_lote, 'ajuste', dp.peso_solicitado, p.unidad_medida, 'pedido_cancelado', NEW.id_pedido, 'Reintegro por pedido cancelado', NULL
+      FROM detalle_pedido dp
+      JOIN productos p ON dp.id_producto = p.id_producto
+      WHERE dp.id_pedido = NEW.id_pedido;
+    END IF;
+  END IF;
+END$$
+DELIMITER ;
+
+-- ===========================================================
+-- Mensaje final / recomendaciones
+-- ===========================================================
+-- 1) Asegúrate de que la capa de aplicación (backend) cree detalle_pedido para cada ítem
+--    antes de confirmar el pedido, para que el trigger de reserva haga su trabajo.
+-- 2) La aplicación debe actualizar detalle_pedido.peso_real al pesar el producto; eso
+--    lanzará el trigger de ajuste.
+-- 3) Si no deseas la reserva automática al insertar detalle_pedido, puedes remover el trigger
+--    "trg_detalle_pedido_reservar" y manejar reservas desde la aplicación.
+-- 4) Si prefieres almacenar pesos en gramos en vez de kg, cambia las unidades y
+--    documentación correspondiente (aquí usamos kg).
+
+

@@ -1,0 +1,245 @@
+-- Crear base de datos
+CREATE DATABASE carniceria_db;
+USE carniceria_db;
+
+-- ======================================================
+-- TABLAS DE CONTROL DE ACCESO
+-- ======================================================
+
+-- Tabla: roles
+CREATE TABLE roles (
+    id_rol INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE
+);
+
+-- Tabla: permisos
+CREATE TABLE permisos (
+    id_permiso INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE,
+    descripcion TEXT
+);
+
+-- Tabla intermedia: rol_permiso
+CREATE TABLE rol_permiso (
+    id_rol_permiso INT AUTO_INCREMENT PRIMARY KEY,
+    id_rol INT NOT NULL,
+    id_permiso INT NOT NULL,
+    FOREIGN KEY (id_rol) REFERENCES roles(id_rol) ON DELETE CASCADE,
+    FOREIGN KEY (id_permiso) REFERENCES permisos(id_permiso) ON DELETE CASCADE
+);
+
+-- Tabla: usuarios
+CREATE TABLE usuarios (
+    id_usuario INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    contraseña VARCHAR(255) NOT NULL, -- Nota: Almacenar con hash seguro (bcrypt, argon2, etc.)
+    token VARCHAR(255) NULL, -- Para manejar sesiones o JWT
+    id_rol INT NOT NULL DEFAULT 1, -- 1 será "Cliente"
+    fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    activo BOOLEAN DEFAULT TRUE, -- Eliminación lógica
+    FOREIGN KEY (id_rol) REFERENCES roles(id_rol) ON DELETE RESTRICT,
+    INDEX idx_usuarios_email (email) -- Índice para autenticación rápida
+);
+
+-- Tabla: intentos_login (para auditoría de accesos)
+CREATE TABLE intentos_login (
+    id_intento INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NOT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    exito BOOLEAN NOT NULL,
+    ip VARCHAR(45),
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE
+);
+
+-- Tabla: direcciones
+CREATE TABLE direcciones (
+    id_direccion INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NOT NULL,
+    direccion VARCHAR(255) NOT NULL,
+    ciudad VARCHAR(100),
+    codigo_postal VARCHAR(20),
+    pais VARCHAR(100),
+    activo BOOLEAN DEFAULT TRUE,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE
+);
+
+-- ======================================================
+-- TABLAS DE PRODUCTOS E INVENTARIO
+-- ======================================================
+
+-- Tabla: categorias
+CREATE TABLE categorias (
+    id_categoria INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL ECE,
+    descripcion TEXT,
+    activo BOOLEAN DEFAULT TRUE
+);
+
+-- Tabla: productos
+CREATE TABLE productos (
+    id_producto INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    descripcion TEXT,
+    precio DECIMAL(10,2) NOT NULL,
+    stock INT NOT NULL DEFAULT 0,
+    id_categoria INT NOT NULL,
+    activo BOOLEAN DEFAULT TRUE, -- Eliminación lógica
+    FOREIGN KEY (id_categoria) REFERENCES categorias(id_categoria) ON DELETE RESTRICT,
+    CONSTRAINT check_stock_positive CHECK (stock >= 0), -- Evitar stock negativo
+    INDEX id_idx_productos_categoria (id_categoria) -- Índice para búsquedas por categoría
+);
+
+-- Tabla: transformaciones de productos
+CREATE TABLE transformaciones (
+    id_transformacion INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto_base INT NOT NULL,
+    id_producto_resultante INT NOT NULL,
+    cantidad_base INT NOT NULL,
+    cantidad_resultante INT NOT NULL,
+    id_usuario INT, -- Auditoría de quién realizó la transformación
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_producto_base) REFERENCES productos(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_producto_resultante) REFERENCES productos(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    CONSTRAINT check_cantidad_base CHECK (cantidad_base > 0),
+    CONSTRAINT check_cantidad_resultante CHECK (cantidad_resultante > 0)
+);
+
+-- Tabla:stock
+CREATE TABLE stock (
+    id_stock INT AUTO_INCREMENT PRIMARY KEY,
+    id_producto INT NOT NULL,
+    cambio INT NOT NULL,
+    motivo VARCHAR( popolare
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    usuario_id INT,
+    FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE CASCADE,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL
+);
+
+-- ======================================================
+-- TABLAS DE PEDIDOS Y DETALLES
+-- ======================================================
+
+-- Tabla: estados_pedido
+CREATE TABLE estados_pedido (
+    id_estado INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE,
+    descripcion TEXT
+);
+
+-- Tabla: pedidos
+CREATE TABLE pedidos (
+    id_pedido INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NOT NULL,
+    id_direccion INT, -- Dirección de envío
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    id_estado INT NOT NULL DEFAULT 1, -- 1 será "Pendiente"
+    descuento DECIMAL(10,2) DEFAULT 0,
+    impuesto DECIMAL(10,2) DEFAULT 0,
+    total DECIMAL(10,2) NOT NULL DEFAULT 0,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+    FOREIGN KEY (id_direccion) REFERENCES direcciones(id_direccion) ON DELETE SET NULL,
+    FOREIGN KEY (id_estado) REFERENCES estados_pedido(id_estado) ON DELETE RESTRICT,
+    INDEX id_idx_pedidos_usuario (id_usuario) -- Índice para consultas por usuario
+) PARTITION BY RANGE (YEAR(fecha)) (
+    PARTITION p2025 VALUES LESS THAN (2026),
+    PARTITION p2026 VALUES LESS THAN (2027),
+    PARTITION p_future VALUES LESS THAN MAXVALUE
+);
+
+-- Tabla: detalle_pedido
+CREATE TABLE detalle_pedido (
+    id_detalle INT AUTO_INCREMENT PRIMARY KEY,
+    id_pedido INT NOT NULL,
+    id_producto INT NOT NULL,
+    cantidad INT NOT NULL,
+    precio_unitario DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE,
+    FOREIGN KEY (id_producto) REFERENCES productos(id_producto) ON DELETE RESTRICT,
+    CONSTRAINT check_cantidad_pedido CHECK (cantidad > 0)
+);
+
+-- Tabla: historial_pedidos (para auditoría de cambios de estado)
+CREATE TABLE historial_pedidos (
+    id_historial INT AUTO_INCREMENT PRIMARY KEY,
+    id_pedido INT NOT NULL,
+    id_estado INT NOT NULL,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    usuario_id INT,
+    comentario TEXT,
+    FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE,
+    FOREIGN KEY (id_estado) REFERENCES estados_pedido(id_estado) ON DELETE RESTRICT,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE SET NULL
+);
+
+-- ======================================================
+-- TRIGGERS
+-- ======================================================
+
+-- Trigger para validar el total del pedido
+DELIMITER //
+CREATE TRIGGER validar_total_pedido
+BEFORE UPDATE ON pedidos
+FOR EACH ROW
+BEGIN
+    DECLARE calculated_total DECIMAL(10,2);
+    SELECT SUM(cantidad * precio_unitario) INTO calculated_total
+    FROM detalle_pedido
+    WHERE id_pedido = NEW.id_pedido;
+    SET calculated_total = calculated_total - NEW.descuento + NEW.impuesto;
+    IF NEW.total != calculated_total THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El total del pedido no coincide con los detalles';
+    END IF;
+END //
+DELIMITER ;
+
+-- ======================================================
+-- DATOS INICIALES
+-- ======================================================
+
+-- Insertar roles
+INSERT INTO roles (nombre) VALUES
+('Cliente'),
+('Administrador'),
+('Vendedor');
+
+-- Insertar permisos
+INSERT INTO permisos (nombre, descripcion) VALUES
+('Gestionar usuarios', 'Permite crear, editar y eliminar usuarios'),
+('Gestionar productos', 'Permite agregar, editar y eliminar productos'),
+('Ver reportes', 'Permite acceder a reportes de ventas e inventario');
+
+-- Asignar permisos a administrador
+INSERT INTO rol_permiso (id_rol, id_permiso) VALUES
+(2, 1),
+(2, 2),
+(2, 3);
+
+-- Insertar estados de pedido
+INSERT INTO estados_pedido (nombre) VALUES
+('Pendiente'),
+('En preparación'),
+('Enviado'),
+('Entregado'),
+('Cancelado');
+
+-- Insertar categorías
+INSERT INTO categorias (nombre, descripcion) VALUES
+('Carnes', 'Cortes de carne fresca'),
+('Embutidos', 'Productos elaborados como chorizos y salchichas');
+
+-- Insertar productos
+INSERT INTO productos (nombre, descripcion, precio, stock, categoria_id) VALUES
+('Carne de res', 'Corte premium', 8.50, 50, 1),
+('Chorizo artesanal', 'Preparado en casa', 5.00, 30, 2);
+
+-- Insertar usuario administrador
+INSERT INTO usuarios (nombre, email, contraseña, rol_id) VALUES
+('Admin', 'admin@carniceria.com', 'admin123', 2); -- Nota: Hashear contraseña en la aplicación
+
+-- Insertar dirección de ejemplo
+INSERT INTO direcciones (usuario_id, direccion, ciudad, codigo_postal, pais) VALUES
+(1, 'Calle Principal 123', 'Ciudad Ejemplo', '12345', 'País Ejemplo');
